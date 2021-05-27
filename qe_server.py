@@ -24,7 +24,6 @@ window = None
 
 #Creates all the required database tables.
 def create_database():
-    global app
     
     player_con = lite.connect('player_database.db')
     with player_con:
@@ -66,10 +65,10 @@ def create_database():
         hub_cur = hub_con.cursor()
         hub_cur.execute("CREATE TABLE IF NOT EXISTS hubs(x FLOAT, y FLOAT, z FLOAT, circuit INTEGER, range INTEGER, stop INTEGER, time INTEGER)")
         
-    paint_con = lite.connect("paint_database")
-    with paint_con:
-        paint_cur = paint_con.cursor()
-        paint_cur.execute("CREATE TABLE IF NOT EXISTS paint(block TEXT, red FLOAT, green FLOAT, blue FLOAT)")
+    item_con = lite.connect("item_database.db")
+    with item_con:
+        item_cur = item_con.cursor()
+        item_cur.execute("CREATE TABLE IF NOT EXISTS items(destroy INTEGER, type TEXT, amount INTEGER, x FLOAT, y FLOAT, z FLOAT)")
 
 #Exits the program.
 def end():
@@ -235,18 +234,21 @@ def receive_hub_data():
     server_log("hubs: "+entry);
     return jsonify(dictToReturn)
 
-#Handles requests to paint blocks over the network.
-@app.route('/paint', methods=['POST'])
-def receive_paint_data():
+#Handles spawning of dropped items.
+@app.route('/items', methods=['POST'])
+def receive_item_data():
     inputstr = request.data
     entry = str(inputstr).split("@")[1]
-    block = entry.split(":")[0]
-    red = entry.split(":")[1].split(",")[0]
-    green = entry.split(":")[1].split(",")[1]
-    blue = entry.split(":")[1].split(",")[2]
-    add_paint_data(block,red,green,blue)        
+    destroy = entry.split(":")[0]
+    item_type = entry.split(":")[1]
+    item_amount = entry.split(":")[2]
+    coords = entry.split(":")[3]
+    x = coords.split(",")[0]
+    y = coords.split(",")[1]
+    z = coords.split(",")[2]
+    add_item_data(destroy, item_type, item_amount, x, y, z)        
     dictToReturn = {'response':str(inputstr)}
-    server_log("paint: "+entry);
+    server_log("item: "+entry);
     return jsonify(dictToReturn)
 
 #Called by app.route function to modify database table.
@@ -292,6 +294,20 @@ def add_block_data(destroy, block, x, y, z, rx, ry, rz, rw):
         block_con.commit()
         block_con.close()
         server_var.block_thread_1_busy = False
+        
+#Called by app.route function to modify database table. 
+def add_item_data(destroy, item_type, item_amount, x, y, z):
+    if server_var.item_thread_2_busy == False:
+        server_var.item_thread_1_busy = True
+        item_con = lite.connect('item_database.db')
+        item_cur = item_con.cursor()
+        item_cur.execute("CREATE TABLE IF NOT EXISTS items(destroy INTEGER, type TEXT, amount INTEGER, x FLOAT, y FLOAT, z FLOAT)")
+        item_cur.execute("DELETE FROM items WHERE x = (?) AND y = (?) AND z = (?)", (x, y, z))
+        item_cur.execute("INSERT INTO items VALUES (?, ?, ?, ?, ?, ?)",(destroy, item_type, item_amount, x, y, z))
+        item_cur.close()
+        item_con.commit()
+        item_con.close()
+        server_var.item_thread_1_busy = False
 
 #Called by app.route function to modify database table.   
 def add_storage_data(x, y, z, slot, item, amount):
@@ -349,17 +365,6 @@ def add_hub_data(x, y, z, hub_circuit, hub_range, hub_stop, hub_time):
     hub_con.close()
 
 #Called by app.route function to modify database table. 
-def add_paint_data(block, red, green, blue):
-    paint_con = lite.connect('paint_database.db')
-    paint_cur = paint_con.cursor()
-    paint_cur.execute("CREATE TABLE IF NOT EXISTS paint(block TEXT, red FLOAT, green FLOAT, blue FLOAT)")
-    paint_cur.execute("DELETE FROM paint WHERE block = (?)",(block,))
-    paint_cur.execute("INSERT INTO paint VALUES (?, ?, ?, ?)",(block, red, green, blue))
-    paint_cur.close()
-    paint_con.commit()
-    paint_con.close()
-
-#Called by app.route function to modify database table. 
 def delete_block_data():
     if server_var.block_thread_1_busy == False:
         server_var.block_thread_2_busy = True
@@ -373,6 +378,19 @@ def delete_block_data():
         block_con.close()
         server_var.block_thread_2_busy = False
         
+#Called by app.route function to modify database table. 
+def delete_item_data():
+    if server_var.item_thread_1_busy == False:
+        server_var.item_thread_2_busy = True
+        server_var.item_time = 0
+        item_con = lite.connect('item_database.db')
+        item_cur = item_con.cursor()
+        item_cur.execute("CREATE TABLE IF NOT EXISTS items(destroy INTEGER, type TEXT, amount INTEGER, x FLOAT, y FLOAT, z FLOAT)")
+        item_cur.execute("DELETE FROM items")
+        item_cur.close()
+        item_con.commit()
+        item_con.close()
+        server_var.item_thread_2_busy = False       
 
 #Database resource.             
 class Chat(Resource):
@@ -439,12 +457,12 @@ class Hubs(Resource):
         return {'hubs': query.cursor.fetchall()}
 
 #Database resource.
-class Paint(Resource):
+class Items(Resource):
     def get(self):
-        paint_engine = create_engine('sqlite:///paint_database.db', connect_args={'timeout': 15})
-        conn = paint_engine.connect()
-        query = conn.execute("SELECT * FROM paint")
-        return {'paint': query.cursor.fetchall()}
+        item_engine = create_engine('sqlite:///item_database.db', connect_args={'timeout': 15})
+        conn = item_engine.connect()
+        query = conn.execute("SELECT * FROM items")
+        return {'items': query.cursor.fetchall()}
 
 #Gets the LAN address.
 def get_local_address():
@@ -477,7 +495,14 @@ def await_blocks():
         if server_var.block_time > 30:
             delete_block_data()
         time.sleep(1) 
-    
+        
+#If no items are dropped for 30 seconds, the item database is cleared.
+def await_items():
+    while True:
+        server_var.item_time = server_var.item_time + 1
+        if server_var.item_time > 30:
+            delete_item_data()
+        time.sleep(1)   
 
 #Adds resources and starts the server.
 def start_server(): 
@@ -491,17 +516,20 @@ def start_server():
     api.add_resource(Machines, '/machines')
     api.add_resource(Hubs, '/hubs')
     api.add_resource(Chat, '/chat')
-    api.add_resource(Paint, '/paint')
+    api.add_resource(Items, '/items')
     server_log("LAN: "+str(server_var.local))
     server_log("Headless: "+str(server_var.headless))
     server_log("Development: "+str(server_var.devel))
     server_log("Starting server...")
     check_status_thread = threading.Thread(target = check_status)
     block_thread = threading.Thread(target = await_blocks)
+    item_thread = threading.Thread(target = await_items)
     check_status_thread.daemon = False
     block_thread.daemon = False
+    item_thread.daemon = False
     check_status_thread.start()   
     block_thread.start()
+    item_thread.start()
     serve(app, host='0.0.0.0', port=5000, threads=512)
 
 #Creates the database tables and calls the start server function.
