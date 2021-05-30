@@ -488,11 +488,11 @@ def check_status():
     except:
         server_log("Server failed to start!")
 
-#If no blocks are placed for 30 seconds, the block database is cleared.
+#If no blocks are placed for 5 seconds, the block database is cleared.
 def await_blocks():
     while True:
         server_var.block_time = server_var.block_time + 1
-        if server_var.block_time > 30:
+        if server_var.block_time > 5:
             delete_block_data()
         time.sleep(1) 
         
