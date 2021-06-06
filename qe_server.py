@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify
 from flask_restful import Resource, Api
 from sqlalchemy import create_engine
 from waitress import serve
+import os.path
 import sqlite3 as lite
 import urllib
 import threading
@@ -12,7 +13,6 @@ from Tkinter import Button
 from Tkconstants import INSIDE, INSERT
 import ScrolledText
 import sys
-import os
 import socket
 import platform
 import requests
@@ -25,6 +25,11 @@ window = None
 #Creates all the required database tables.
 def create_database():
     
+    ban_con = lite.connect('ban_database.db')
+    with ban_con:
+        ban_cur = ban_con.cursor()   
+        ban_cur.execute("CREATE TABLE IF NOT EXISTS bans(ip TEXT)")
+        
     player_con = lite.connect('player_database.db')
     with player_con:
         player_cur = player_con.cursor()   
@@ -100,6 +105,25 @@ def get_files():
     if platform.system() == "Darwin":
         return send_from_directory(os.path.expanduser('~')+"/Library/Application Support/Droog71/Quantum Engineering/SaveData", world, as_attachment=True)
 
+#Enables or disables hazards in the game.
+@app.route('/hazards', methods=['GET'])
+def get_hazard_data():
+    dictToReturn = {'hazards':str(server_var.hazards)}
+    return jsonify(dictToReturn)
+
+#Enables or disables hazards in the game.
+@app.route('/hazards', methods=['POST'])
+def set_hazard_data():
+    inputstr = request.data
+    entry = str(inputstr).split("@")[1]
+    if entry == "True":
+        server_var.hazards = True;
+    if entry == "False":
+        server_var.hazards = False;
+    dictToReturn = {'response':str(inputstr)}
+    server_log("hazards: "+entry)
+    return jsonify(dictToReturn)
+
 #Handles player updates from clients.   
 @app.route('/players', methods=['POST'])
 def receive_player_data():
@@ -115,7 +139,50 @@ def receive_player_data():
     r = values.split(",")[5]
     g = values.split(",")[6]
     b = values.split(",")[7]
-    add_player_data(name, x, y, z, fx, fz, r, g, b)   
+    ip = values.split(",")[8]
+    password = values.split(",")[9]
+    
+    add_player_data(name, x, y, z, fx, fz, r, g, b)
+    
+    if name + "=" + ip not in server_var.players:
+        if name == get_external_address() and ip != get_external_address():
+            add_ban_data(ip)
+        else:
+            server_var.players.append(name + "=" + ip)
+            if name != "localhost" and name != get_local_address() and name != get_external_address():
+                server_log("updating connection for player: "+ name + "=" + ip)
+                player_found = False
+                try:  
+                    file_exists = os.path.isfile('passwords.txt')
+                    if (file_exists == False):
+                        open("passwords.txt", "w")
+                    with open('passwords.txt') as reader:
+                        for line in reader.readlines():
+                            if line.split("=")[0] == name:
+                                player_found = True
+                                if line.split("=")[1].strip() != password:
+                                    server_log("incorrect password entered for player: " + name)
+                                    add_ban_data(ip)
+                        reader.close()
+                        if player_found == False:
+                            f = open("passwords.txt", "a")
+                            f.write(name + "=" + password + "\n")
+                            f.close()                
+                except IOError:
+                    server_log("failed to read passwords.txt")
+    
+                try:  
+                    file_exists = os.path.isfile('banned_ips.txt')
+                    if (file_exists == False):
+                        open("banned_ips.txt", "w")
+                    with open('banned_ips.txt') as reader:
+                        for line in reader.readlines():
+                            if line == ip:
+                                add_ban_data(ip)
+                        reader.close()
+                except IOError:
+                    server_log("failed to read banned_ips.txt")
+           
     dictToReturn = {'response':str(inputstr)}
     return jsonify(dictToReturn)
 
@@ -167,7 +234,7 @@ def receive_storage_data():
     amount = contents.split("=")[1]
     add_storage_data(storage_x, storage_y, storage_z, slot, item, amount)        
     dictToReturn = {'response':str(inputstr)}
-    server_log("storage: "+entry);
+    server_log("storage: "+entry)
     return jsonify(dictToReturn)
 
 #Updates database when a player reboots a conduit or changes conduit range.
@@ -182,7 +249,7 @@ def receive_conduit_data():
     conduit_range = entry.split(":")[1]
     add_conduit_data(conduit_x, conduit_y, conduit_z, conduit_range)        
     dictToReturn = {'response':str(inputstr)}
-    server_log("conduit: "+entry);
+    server_log("conduit: "+entry)
     return jsonify(dictToReturn)
 
 #Updates database when a player modifies power conduit settings.
@@ -196,9 +263,9 @@ def receive_power_data():
     power_z = power_location.split(",")[2]
     power_range = entry.split(":")[1].split(",")[0]
     dual_output = entry.split(":")[1].split(",")[1]
-    add_power_data(power_x, power_y, power_z, power_range, dual_output)        
+    add_power_data(power_x, power_y, power_z, power_range, dual_output)     
     dictToReturn = {'response':str(inputstr)}
-    server_log("power: "+entry);
+    server_log("power: "+entry)
     return jsonify(dictToReturn)
 
 #Updates database when a player reboots or changes the speed of a machine.
@@ -211,9 +278,9 @@ def receive_machine_data():
     machine_y = machine_location.split(",")[1]
     machine_z = machine_location.split(",")[2]
     machine_speed = entry.split(":")[1]
-    add_machine_data(machine_x, machine_y, machine_z, machine_speed)        
+    add_machine_data(machine_x, machine_y, machine_z, machine_speed)  
     dictToReturn = {'response':str(inputstr)}
-    server_log("machine: "+entry);
+    server_log("machine: "+entry)
     return jsonify(dictToReturn)
 
 #Updates database when a player modifies rail cart hub settings.
@@ -229,9 +296,9 @@ def receive_hub_data():
     hub_range = entry.split(":")[1].split(",")[1]
     hub_stop = entry.split(":")[1].split(",")[2]
     hub_time = entry.split(":")[1].split(",")[3]
-    add_hub_data(hub_x, hub_y, hub_z, hub_circuit, hub_range, hub_stop, hub_time)        
+    add_hub_data(hub_x, hub_y, hub_z, hub_circuit, hub_range, hub_stop, hub_time)       
     dictToReturn = {'response':str(inputstr)}
-    server_log("hubs: "+entry);
+    server_log("hubs: "+entry)
     return jsonify(dictToReturn)
 
 #Handles spawning of dropped items.
@@ -246,9 +313,9 @@ def receive_item_data():
     x = coords.split(",")[0]
     y = coords.split(",")[1]
     z = coords.split(",")[2]
-    add_item_data(destroy, item_type, item_amount, x, y, z)        
+    add_item_data(destroy, item_type, item_amount, x, y, z) 
     dictToReturn = {'response':str(inputstr)}
-    server_log("item: "+entry);
+    server_log("item: "+entry)
     return jsonify(dictToReturn)
 
 #Called by app.route function to modify database table.
@@ -258,13 +325,32 @@ def add_player_data(name, x, y, z, fx, fz, r, b, g):
     player_cur.execute("CREATE TABLE IF NOT EXISTS players(name TEXT, x FLOAT, y FLOAT, z FLOAT, fx FLOAT, fz FLOAT, red FLOAT, green FLOAT, blue FLOAT)") 
     player_cur.execute("DELETE FROM players WHERE name = (?)", (name,))
     player_cur.execute("INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",(name, x, y, z, fx, fz, r, b, g))
+    player_cur.execute("select * from players")
+    results = player_cur.fetchall()
+    player_count = len(results)
     server_var.player_updates = server_var.player_updates + 1
-    if server_var.player_updates > 1000:
+    if server_var.player_updates > 60 * player_count:
         player_cur.execute("DELETE FROM players WHERE name != (?)", (name,))
+        server_var.players = []
         server_var.player_updates = 0
     player_cur.close()
     player_con.commit()   
     player_con.close()
+
+#Called by app.route function to modify database table.
+def add_ban_data(ip):  
+    print ("thread busy? " + str(server_var.ban_thread_2_busy))
+    if server_var.ban_thread_2_busy == False:
+        server_var.ban_thread_1_busy = True
+        ban_con = lite.connect('ban_database.db')
+        ban_cur = ban_con.cursor()
+        ban_cur.execute("CREATE TABLE IF NOT EXISTS bans(ip TEXT)")
+        ban_cur.execute("DELETE FROM bans WHERE ip = (?)", (ip,))
+        ban_cur.execute("INSERT INTO bans VALUES (?)",(ip,))
+        ban_cur.close()
+        ban_con.commit()   
+        ban_con.close()
+        server_var.ban_thread_1_busy = False
 
 #Called by app.route function to modify database table.
 def add_chat_message(name, message):
@@ -364,7 +450,21 @@ def add_hub_data(x, y, z, hub_circuit, hub_range, hub_stop, hub_time):
     hub_con.commit()
     hub_con.close()
 
-#Called by app.route function to modify database table. 
+#Clears the database. 
+def delete_ban_data():
+    if server_var.ban_thread_1_busy == False:
+        server_var.ban_thread_2_busy = True
+        server_var.ban_time = 0
+        ban_con = lite.connect('ban_database.db')
+        ban_cur = ban_con.cursor()
+        ban_cur.execute("CREATE TABLE IF NOT EXISTS bans(ip TEXT)")
+        ban_cur.execute("DELETE FROM bans")
+        ban_cur.close()
+        ban_con.commit()
+        ban_con.close()
+        server_var.ban_thread_2_busy = False  
+
+#Clears the database.  
 def delete_block_data():
     if server_var.block_thread_1_busy == False:
         server_var.block_thread_2_busy = True
@@ -378,7 +478,7 @@ def delete_block_data():
         block_con.close()
         server_var.block_thread_2_busy = False
         
-#Called by app.route function to modify database table. 
+#Clears the database. 
 def delete_item_data():
     if server_var.item_thread_1_busy == False:
         server_var.item_thread_2_busy = True
@@ -390,7 +490,7 @@ def delete_item_data():
         item_cur.close()
         item_con.commit()
         item_con.close()
-        server_var.item_thread_2_busy = False       
+        server_var.item_thread_2_busy = False        
 
 #Database resource.             
 class Chat(Resource):
@@ -407,6 +507,14 @@ class Players(Resource):
         conn = player_engine.connect()
         query = conn.execute("SELECT * FROM players")
         return {'players': query.cursor.fetchall()}
+    
+#Database resource.    
+class Bans(Resource):
+    def get(self):
+        ban_engine = create_engine('sqlite:///ban_database.db', connect_args={'timeout': 15})
+        conn = ban_engine.connect()
+        query = conn.execute("SELECT * FROM bans")
+        return {'bans': query.cursor.fetchall()}
 
 #Database resource.   
 class Blocks(Resource):
@@ -488,6 +596,14 @@ def check_status():
     except:
         server_log("Server failed to start!")
 
+#Ban database is emptied every 30 seconds. Permanent bans (from file) are restored.
+def manage_bans():
+    while True:
+        server_var.ban_time = server_var.ban_time + 1
+        if server_var.ban_time > 30:
+            delete_ban_data()
+        time.sleep(1) 
+
 #If no blocks are placed for 5 seconds, the block database is cleared.
 def await_blocks():
     while True:
@@ -509,6 +625,7 @@ def start_server():
     global app
     global api
     api.add_resource(Players, '/players')
+    api.add_resource(Bans, '/bans')
     api.add_resource(Blocks, '/blocks')
     api.add_resource(Storage, '/storage')
     api.add_resource(Conduits, '/conduits')
@@ -520,14 +637,18 @@ def start_server():
     server_log("LAN: "+str(server_var.local))
     server_log("Headless: "+str(server_var.headless))
     server_log("Development: "+str(server_var.devel))
+    server_log("Hazards: "+str(server_var.hazards))
     server_log("Starting server...")
     check_status_thread = threading.Thread(target = check_status)
+    ban_thread = threading.Thread(target = manage_bans)
     block_thread = threading.Thread(target = await_blocks)
     item_thread = threading.Thread(target = await_items)
     check_status_thread.daemon = False
+    ban_thread.daemon = False
     block_thread.daemon = False
     item_thread.daemon = False
-    check_status_thread.start()   
+    check_status_thread.start()
+    ban_thread.start()
     block_thread.start()
     item_thread.start()
     serve(app, host='0.0.0.0', port=5000, threads=512)
@@ -564,6 +685,8 @@ def init():
             server_var.local = True
         if str(i) == "devel":
             server_var.devel = True
+        if str(i) == "hazards":
+            server_var.hazards = True
             
     if server_var.headless == False:
         window = Tkinter.Tk()
