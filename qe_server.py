@@ -9,6 +9,7 @@ import urllib
 import threading
 import time
 import Tkinter
+import shutil
 from Tkinter import Button
 from Tkconstants import INSIDE, INSERT
 import ScrolledText
@@ -17,6 +18,7 @@ import socket
 import platform
 import requests
 import server_var
+import compressor
 
 app = Flask(__name__)
 api = Api(app)
@@ -92,18 +94,26 @@ def stop():
 def get_files():    
     if server_var.local == True:
         if server_var.devel == True:
-            world = "localhost.sav"
+            world = "localhost"
         else:
-            world = get_local_address() + ".sav"
+            world = get_local_address()
     else:
-        world = get_external_address() + ".sav"
+        world = get_external_address()
         
     if platform.system() == "Linux":
-        return send_from_directory(os.path.expanduser('~')+"/.config/unity3d/Droog71/Quantum Engineering/SaveData", world, as_attachment=True)
+        dir_name = os.path.expanduser('~')+"/.config/unity3d/Droog71/Quantum Engineering/SaveData/"
     if platform.system() == "Windows":
-        return send_from_directory(os.path.expanduser('~')+"\AppData\LocalLow\Droog71\Quantum Engineering\SaveData", world, as_attachment=True)
+        dir_name = os.path.expanduser('~')+"\AppData\LocalLow\Droog71\Quantum Engineering\SaveData/"
     if platform.system() == "Darwin":
-        return send_from_directory(os.path.expanduser('~')+"/Library/Application Support/Droog71/Quantum Engineering/SaveData", world, as_attachment=True)
+        dir_name = os.path.expanduser('~')+"/Library/Application Support/Droog71/Quantum Engineering/SaveData/"
+    
+    shutil.rmtree(world)
+    shutil.copytree(dir_name + world, world)
+    
+    print("Player connecting... compressing save file for download.")   
+    compressor.compress(world)
+    
+    return send_from_directory(os.getcwd(), world + ".zip",  as_attachment=True)
 
 #Enables or disables hazards in the game.
 @app.route('/hazards', methods=['GET'])
@@ -339,7 +349,6 @@ def add_player_data(name, x, y, z, fx, fz, r, b, g):
 
 #Called by app.route function to modify database table.
 def add_ban_data(ip):  
-    print ("thread busy? " + str(server_var.ban_thread_2_busy))
     if server_var.ban_thread_2_busy == False:
         server_var.ban_thread_1_busy = True
         ban_con = lite.connect('ban_database.db')
