@@ -89,7 +89,7 @@ def stop():
 
 #Handles world download requests from clients.
 @app.route('/world', methods = ['GET'])
-def get_files():    
+def get_files():
     if server_var.local == True:
         if server_var.devel == True:
             world = "localhost.sav"
@@ -117,9 +117,9 @@ def set_hazard_data():
     inputstr = request.data
     entry = str(inputstr).split("@")[1]
     if entry == "True":
-        server_var.hazards = True;
+        server_var.hazards = True
     if entry == "False":
-        server_var.hazards = False;
+        server_var.hazards = False
     dictToReturn = {'response':str(inputstr)}
     server_log("hazards: "+entry)
     return jsonify(dictToReturn)
@@ -214,9 +214,14 @@ def receive_block_data():
     ry = rotation.split(",")[1]
     rz = rotation.split(",")[2]
     rw = rotation.split(",")[3]
-    add_block_data(destroy, block, x, y, z, rx, ry, rz, rw)        
+    add_block_data(destroy, block, x, y, z, rx, ry, rz, rw)
     dictToReturn = {'response':str(inputstr)}
     server_log("blocks: "+entry)
+    return jsonify(dictToReturn)
+
+@app.route('/blocks', methods=['GET'])
+def get_blocks():
+    dictToReturn = {'response':str(server_var.block_queue)}
     return jsonify(dictToReturn)
 
 #Handles storage inventory changes from both host and clients.
@@ -338,9 +343,8 @@ def add_player_data(name, x, y, z, fx, fz, r, b, g):
     player_con.close()
 
 #Called by app.route function to modify database table.
-def add_ban_data(ip):  
-    print ("thread busy? " + str(server_var.ban_thread_2_busy))
-    if server_var.ban_thread_2_busy == False:
+def add_ban_data(ip):
+    if server_var.ban_thread_2_busy == False and server_var.ban_thread_1_busy == False:
         server_var.ban_thread_1_busy = True
         ban_con = lite.connect('ban_database.db')
         ban_cur = ban_con.cursor()
@@ -368,22 +372,13 @@ def add_chat_message(name, message):
 
 #Called by app.route function to modify database table. 
 def add_block_data(destroy, block, x, y, z, rx, ry, rz, rw):
-    if server_var.block_thread_2_busy == False:
-        server_var.block_thread_1_busy = True
-        server_var.block_time = 0
-        block_con = lite.connect('block_database.db')
-        block_cur = block_con.cursor()
-        block_cur.execute("CREATE TABLE IF NOT EXISTS blocks(destroy INTEGER, block TEXT, x FLOAT, y FLOAT, z FLOAT, rx FLOAT, ry FLOAT, rz FLOAT, rw FLOAT)")
-        block_cur.execute("DELETE FROM blocks WHERE x = (?) AND y = (?) AND z = (?)", (x, y, z))
-        block_cur.execute("INSERT INTO blocks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",(destroy, block, x, y, z, rx, ry, rz, rw))
-        block_cur.close()
-        block_con.commit()
-        block_con.close()
-        server_var.block_thread_1_busy = False
-        
+    server_var.block_time = 0
+    block = { "destroy": destroy, "block": block, "x": x, "y": y, "z": z, "rx": rx, "ry": ry, "rz": rz, "rw": rw }
+    server_var.block_queue.append(block)
+
 #Called by app.route function to modify database table. 
 def add_item_data(destroy, item_type, item_amount, x, y, z):
-    if server_var.item_thread_2_busy == False:
+    if server_var.item_thread_2_busy == False and server_var.item_thread_1_busy == False:
         server_var.item_thread_1_busy = True
         item_con = lite.connect('item_database.db')
         item_cur = item_con.cursor()
@@ -452,7 +447,7 @@ def add_hub_data(x, y, z, hub_circuit, hub_range, hub_stop, hub_time):
 
 #Clears the database. 
 def delete_ban_data():
-    if server_var.ban_thread_1_busy == False:
+    if server_var.ban_thread_1_busy == False and server_var.ban_thread_2_busy == False:
         server_var.ban_thread_2_busy = True
         server_var.ban_time = 0
         ban_con = lite.connect('ban_database.db')
@@ -466,21 +461,11 @@ def delete_ban_data():
 
 #Clears the database.  
 def delete_block_data():
-    if server_var.block_thread_1_busy == False:
-        server_var.block_thread_2_busy = True
-        server_var.block_time = 0
-        block_con = lite.connect('block_database.db')
-        block_cur = block_con.cursor()
-        block_cur.execute("CREATE TABLE IF NOT EXISTS blocks(destroy INTEGER, block TEXT, x FLOAT, y FLOAT, z FLOAT, rx FLOAT, ry FLOAT, rz FLOAT, rw FLOAT)")
-        block_cur.execute("DELETE FROM blocks")
-        block_cur.close()
-        block_con.commit()
-        block_con.close()
-        server_var.block_thread_2_busy = False
+    server_var.block_queue = []
         
 #Clears the database. 
 def delete_item_data():
-    if server_var.item_thread_1_busy == False:
+    if server_var.item_thread_1_busy == False and server_var.item_thread_2_busy == False:
         server_var.item_thread_2_busy = True
         server_var.item_time = 0
         item_con = lite.connect('item_database.db')
