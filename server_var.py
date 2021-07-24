@@ -1,5 +1,6 @@
 players = []
-block_queue = []
+player_data = []
+block_data = []
 ban_time = 0
 ban_thread_1_busy = False
 ban_thread_2_busy = False

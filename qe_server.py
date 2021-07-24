@@ -105,7 +105,7 @@ def get_files():
     if platform.system() == "Darwin":
         return send_from_directory(os.path.expanduser('~')+"/Library/Application Support/Droog71/Quantum Engineering/SaveData", world, as_attachment=True)
 
-#Enables or disables hazards in the game.
+#Gets whether or not hazards are enabled.
 @app.route('/hazards', methods=['GET'])
 def get_hazard_data():
     dictToReturn = {'hazards':str(server_var.hazards)}
@@ -123,6 +123,11 @@ def set_hazard_data():
     dictToReturn = {'response':str(inputstr)}
     server_log("hazards: "+entry)
     return jsonify(dictToReturn)
+
+@app.route('/players', methods=['GET'])
+def get_player_data():
+    dictToReturn = {'response':str(server_var.player_data)}
+    return jsonify(dictToReturn)    
 
 #Handles player updates from clients.   
 @app.route('/players', methods=['POST'])
@@ -198,7 +203,7 @@ def receive_chat_data():
     server_log("chat: "+entry)
     return jsonify(dictToReturn)
 
-#Updates blocks instantiated or removed by clients.
+#Updates blocks recently instantiated or removed by clients.
 @app.route('/blocks', methods=['POST'])
 def receive_block_data():
     inputstr = request.data
@@ -219,9 +224,10 @@ def receive_block_data():
     server_log("blocks: "+entry)
     return jsonify(dictToReturn)
 
+#Gets data about blocks recently instantiated or removed by clients.
 @app.route('/blocks', methods=['GET'])
-def get_blocks():
-    dictToReturn = {'response':str(server_var.block_queue)}
+def get_block_data():
+    dictToReturn = {'response':str(server_var.block_data)}
     return jsonify(dictToReturn)
 
 #Handles storage inventory changes from both host and clients.
@@ -324,23 +330,17 @@ def receive_item_data():
     return jsonify(dictToReturn)
 
 #Called by app.route function to modify database table.
-def add_player_data(name, x, y, z, fx, fz, r, b, g):  
-    player_con = lite.connect('player_database.db')
-    player_cur = player_con.cursor()
-    player_cur.execute("CREATE TABLE IF NOT EXISTS players(name TEXT, x FLOAT, y FLOAT, z FLOAT, fx FLOAT, fz FLOAT, red FLOAT, green FLOAT, blue FLOAT)") 
-    player_cur.execute("DELETE FROM players WHERE name = (?)", (name,))
-    player_cur.execute("INSERT INTO players VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",(name, x, y, z, fx, fz, r, b, g))
-    player_cur.execute("select * from players")
-    results = player_cur.fetchall()
-    player_count = len(results)
+def add_player_data(name, x, y, z, fx, fz, r, b, g):
+    player = { "name": name, "x": x, "y": y, "z": z, "fx": fx, "fz": fz, "r": r, "b": b, "g": g }
+    if player not in server_var.player_data:
+        server_var.player_data.append(player)
+
+    player_count = len(server_var.player_data)
     server_var.player_updates = server_var.player_updates + 1
     if server_var.player_updates > 60 * player_count:
-        player_cur.execute("DELETE FROM players WHERE name != (?)", (name,))
+        server_var.player_data = []
         server_var.players = []
         server_var.player_updates = 0
-    player_cur.close()
-    player_con.commit()   
-    player_con.close()
 
 #Called by app.route function to modify database table.
 def add_ban_data(ip):
@@ -374,7 +374,7 @@ def add_chat_message(name, message):
 def add_block_data(destroy, block, x, y, z, rx, ry, rz, rw):
     server_var.block_time = 0
     block = { "destroy": destroy, "block": block, "x": x, "y": y, "z": z, "rx": rx, "ry": ry, "rz": rz, "rw": rw }
-    server_var.block_queue.append(block)
+    server_var.block_data.append(block)
 
 #Called by app.route function to modify database table. 
 def add_item_data(destroy, item_type, item_amount, x, y, z):
@@ -457,11 +457,7 @@ def delete_ban_data():
         ban_cur.close()
         ban_con.commit()
         ban_con.close()
-        server_var.ban_thread_2_busy = False  
-
-#Clears the database.  
-def delete_block_data():
-    server_var.block_queue = []
+        server_var.ban_thread_2_busy = False   
         
 #Clears the database. 
 def delete_item_data():
@@ -594,7 +590,7 @@ def await_blocks():
     while True:
         server_var.block_time = server_var.block_time + 1
         if server_var.block_time > 5:
-            delete_block_data()
+            server_var.block_data = []
         time.sleep(1) 
         
 #If no items are dropped for 30 seconds, the item database is cleared.
