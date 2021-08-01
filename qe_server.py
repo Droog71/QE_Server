@@ -8,10 +8,9 @@ import sqlite3 as lite
 import urllib
 import threading
 import time
-import Tkinter
-from Tkinter import Button
-from Tkconstants import INSIDE, INSERT
-import ScrolledText
+from tkinter import Button
+from tkinter.constants import INSIDE, INSERT
+import tkinter.scrolledtext
 import sys
 import socket
 import platform
@@ -331,9 +330,15 @@ def receive_item_data():
 
 #Called by app.route function to modify database table.
 def add_player_data(name, x, y, z, fx, fz, r, b, g):
+    for i in range(len(server_var.player_data)):
+        player_data = server_var.player_data[i]
+        player_name = player_data['name']
+        if player_name == name:
+            del server_var.player_data[i]
+            break
+      
     player = { "name": name, "x": x, "y": y, "z": z, "fx": fx, "fz": fz, "r": r, "b": b, "g": g }
-    if player not in server_var.player_data:
-        server_var.player_data.append(player)
+    server_var.player_data.append(player)
 
     player_count = len(server_var.player_data)
     server_var.player_updates = server_var.player_updates + 1
@@ -571,7 +576,7 @@ def check_status():
     time.sleep(3)
     url = "http://localhost:5000/players"
     try:
-        response = urllib.urlopen(url).read()
+        response = urllib.request.urlopen(url).read()
         if response != None:     
             server_log("Server is running...")
     except:
@@ -670,11 +675,11 @@ def init():
             server_var.hazards = True
             
     if server_var.headless == False:
-        window = Tkinter.Tk()
+        window = tkinter.Tk()
         window.config(background="black")
         window.title("QE Server")
         window.geometry('%dx%d' % (640,480))
-        logtxt = ScrolledText.ScrolledText(window, width=88, height=32)
+        logtxt = tkinter.scrolledtext.ScrolledText(window, width=88, height=32)
         logtxt.configure(font=("Arial Bold", 8), fg="white")
         logtxt.configure(background='black')
         logtxt.place(bordermode=INSIDE, rely=0, relx=0)    
